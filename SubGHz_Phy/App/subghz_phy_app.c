@@ -2,8 +2,9 @@
 /**
   ******************************************************************************
   * @file    subghz_phy_app.c
-  * @author  MCD Application Team
-  * @brief   Application of the SubGHz_Phy Middleware
+  * @author  MCD Application Team - modified version by MGG
+  * @brief   RANGE TEST protocol based on the Application of the SubGHz_Phy Middleware
+  * @device	 MASTER - OR - SLAVE: define it manually
   ******************************************************************************
   * @attention
   *
@@ -98,11 +99,12 @@ int8_t RssiValue = 0;
 int8_t SnrValue = 0;
 /* Led Timers objects*/
 static UTIL_TIMER_Object_t timerLed;
+/* CHOOSE MASTER or SLAVE  ====================================================*/
+/*=============================================================================*/
 /* device state. Master: true, Slave: false*/
-bool isMaster = true;
-/* random delay to make sure 2 devices will sync*/
-/* the closest the random delays are, the longer it will
-   take for the devices to sync when started simultaneously*/
+bool isMaster = false;
+/* random delay is zero - keep it for now for using the same code*/
+
 static int32_t random_delay;
 /* USER CODE END PV */
 
@@ -182,8 +184,8 @@ void SubghzApp_Init(void)
   Radio.Init(&RadioEvents);
 
   /* USER CODE BEGIN SubghzApp_Init_2 */
-  /*calculate random delay for synchronization*/
-  random_delay = (Radio.Random()) >> 22; /*10bits random e.g. from 0 to 1023 ms*/
+  /* random delay will be zero for now*/
+  random_delay = 0;
 
   /* Radio Set frequency */
   Radio.SetChannel(RF_FREQUENCY);
@@ -232,7 +234,8 @@ void SubghzApp_Init(void)
   /*fills tx buffer*/
   memset(BufferTx, 0x0, MAX_APP_BUFFER_SIZE);
 
-  APP_LOG(TS_ON, VLEVEL_L, "rand=%d\n\r", random_delay);
+  /* MGG - remove the random delay log message*/
+  /*APP_LOG(TS_ON, VLEVEL_L, "rand=%d\n\r", random_delay);*/
   /*starts reception*/
   Radio.Rx(RX_TIMEOUT_VALUE + random_delay);
 
