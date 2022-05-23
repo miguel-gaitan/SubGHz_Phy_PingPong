@@ -2,9 +2,9 @@
 /**
   ******************************************************************************
   * @file    subghz_phy_app.c
-  * @author  MCD Application Team - modified version by MGG
+  * @author  MCD Application Team - Modified version by MGG
   * @brief   RANGE TEST protocol based on the Application of the SubGHz_Phy Middleware
-  * @device	 MASTER - OR - SLAVE: define it manually
+  * @device	 MASTER - OR - SLAVE: defined it manually
   ******************************************************************************
   * @attention
   *
@@ -99,10 +99,12 @@ int8_t RssiValue = 0;
 int8_t SnrValue = 0;
 /* Led Timers objects*/
 static UTIL_TIMER_Object_t timerLed;
-/* CHOOSE MASTER or SLAVE  ====================================================*/
+/*=============================================================================*/
+/* MASTER or SLAVE															   */
 /*=============================================================================*/
 /* device state. Master: true, Slave: false*/
 bool isMaster = false;
+
 /* random delay is zero - keep it for now for using the same code*/
 
 static int32_t random_delay;
@@ -151,97 +153,87 @@ static void OnledEvent(void *context);
 static void PingPong_Process(void);
 /* USER CODE END PFP */
 
+/*=============================================================================*/
+/* RANGE TEST																   */
+/*=============================================================================*/
+
 /* Exported functions ---------------------------------------------------------*/
 void SubghzApp_Init(void)
 {
   /* USER CODE BEGIN SubghzApp_Init_1 */
 
-  APP_LOG(TS_OFF, VLEVEL_M, "\n\rPING PONG\n\r");
-  /* Get SubGHY_Phy APP version*/
-  APP_LOG(TS_OFF, VLEVEL_M, "APPLICATION_VERSION: V%X.%X.%X\r\n",
-          (uint8_t)(APP_VERSION_MAIN),
-          (uint8_t)(APP_VERSION_SUB1),
-          (uint8_t)(APP_VERSION_SUB2));
-
-  /* Get MW SubGhz_Phy info */
-  APP_LOG(TS_OFF, VLEVEL_M, "MW_RADIO_VERSION:    V%X.%X.%X\r\n",
-          (uint8_t)(SUBGHZ_PHY_VERSION_MAIN),
-          (uint8_t)(SUBGHZ_PHY_VERSION_SUB1),
-          (uint8_t)(SUBGHZ_PHY_VERSION_SUB2));
+/*=============================================================================*/
+/* WELCOME MESSAGE  														   */
+/*=============================================================================*/
+	APP_LOG(TS_OFF, VLEVEL_M, "\n\r RANGE TEST - WELCOME! \n\r");
 
   /* Led Timers*/
   UTIL_TIMER_Create(&timerLed, LED_PERIOD_MS, UTIL_TIMER_ONESHOT, OnledEvent, NULL);
   UTIL_TIMER_Start(&timerLed);
-  /* USER CODE END SubghzApp_Init_1 */
 
-  /* Radio initialization */
+  /* USER CODE END SubghzApp_Init_1 ::::::::::::::::::::::::::::::::::::::::::::*/
+
+ /*=============================================================================*/
+ /* Initialize radio 													   */
+ /*=============================================================================*/
+
   RadioEvents.TxDone = OnTxDone;
   RadioEvents.RxDone = OnRxDone;
   RadioEvents.TxTimeout = OnTxTimeout;
   RadioEvents.RxTimeout = OnRxTimeout;
   RadioEvents.RxError = OnRxError;
 
+  /* current radio status ====================================================*/
   Radio.Init(&RadioEvents);
 
   /* USER CODE BEGIN SubghzApp_Init_2 */
-  /* random delay will be zero for now*/
   random_delay = 0;
 
-  /* Radio Set frequency */
+  /* Radio Set frequency (already set to 868000000) ===========================*/
   Radio.SetChannel(RF_FREQUENCY);
 
-  /* Radio configuration */
-#if ((USE_MODEM_LORA == 1) && (USE_MODEM_FSK == 0))
+  /*=============================================================================*/
+  /* RADIO CONFIGURATION MESSAGE - BW & SF  							         */
+  /*=============================================================================*/
+
   APP_LOG(TS_OFF, VLEVEL_M, "---------------\n\r");
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_MODULATION\n\r");
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_BW=%d kHz\n\r", (1 << LORA_BANDWIDTH) * 125);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_SF=%d\n\r", LORA_SPREADING_FACTOR);
 
+  /*=============================================================================*/
+  /* Radio configuration: LORA, TX_PWR, BW, SF, C/R, Preamble, Payload, Timeout */
+
+  /*=============================================================================*/
+  /* TX : Transmitter configuration												 */
   Radio.SetTxConfig(MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
                     LORA_SPREADING_FACTOR, LORA_CODINGRATE,
                     LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
                     true, 0, 0, LORA_IQ_INVERSION_ON, TX_TIMEOUT_VALUE);
-
+  /*=============================================================================*/
+  /* RX : Receiver configuration 												 */
   Radio.SetRxConfig(MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
                     LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
                     LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
                     0, true, 0, 0, LORA_IQ_INVERSION_ON, true);
 
+  /*max payload length = 255 Bytes (previously defined) */
   Radio.SetMaxPayloadLength(MODEM_LORA, MAX_APP_BUFFER_SIZE);
-
-#elif ((USE_MODEM_LORA == 0) && (USE_MODEM_FSK == 1))
-  APP_LOG(TS_OFF, VLEVEL_M, "---------------\n\r");
-  APP_LOG(TS_OFF, VLEVEL_M, "FSK_MODULATION\n\r");
-  APP_LOG(TS_OFF, VLEVEL_M, "FSK_BW=%d Hz\n\r", FSK_BANDWIDTH);
-  APP_LOG(TS_OFF, VLEVEL_M, "FSK_DR=%d bits/s\n\r", FSK_DATARATE);
-
-  Radio.SetTxConfig(MODEM_FSK, TX_OUTPUT_POWER, FSK_FDEV, 0,
-                    FSK_DATARATE, 0,
-                    FSK_PREAMBLE_LENGTH, FSK_FIX_LENGTH_PAYLOAD_ON,
-                    true, 0, 0, 0, TX_TIMEOUT_VALUE);
-
-  Radio.SetRxConfig(MODEM_FSK, FSK_BANDWIDTH, FSK_DATARATE,
-                    0, FSK_AFC_BANDWIDTH, FSK_PREAMBLE_LENGTH,
-                    0, FSK_FIX_LENGTH_PAYLOAD_ON, 0, true,
-                    0, 0, false, true);
-
-  Radio.SetMaxPayloadLength(MODEM_FSK, MAX_APP_BUFFER_SIZE);
-
-#else
-#error "Please define a modulation in the subghz_phy_app.h file."
-#endif /* USE_MODEM_LORA | USE_MODEM_FSK */
 
   /*fills tx buffer*/
   memset(BufferTx, 0x0, MAX_APP_BUFFER_SIZE);
 
-  /* MGG - remove the random delay log message*/
-  /*APP_LOG(TS_ON, VLEVEL_L, "rand=%d\n\r", random_delay);*/
-  /*starts reception*/
+  /*=============================================================================*/
+  /* RECEIVING MESSAGE						  							         */
+  /*=============================================================================*/
+  /*starts reception - inmediately because random_delay = 0*/
   Radio.Rx(RX_TIMEOUT_VALUE + random_delay);
+  APP_LOG(TS_OFF, VLEVEL_M, "RECEIVING ...---------------\n\r");
 
   /*register task to to be run in while(1) after Radio IT*/
   UTIL_SEQ_RegTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), UTIL_SEQ_RFU, PingPong_Process);
-  /* USER CODE END SubghzApp_Init_2 */
+
+  /* USER CODE END SubghzApp_Init_2 :::::::::::::::::::::::::::::::::::::::::::::::*/
 }
 
 /* USER CODE BEGIN EF */
@@ -264,15 +256,10 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
 {
   /* USER CODE BEGIN OnRxDone */
   APP_LOG(TS_ON, VLEVEL_L, "OnRxDone\n\r");
-#if ((USE_MODEM_LORA == 1) && (USE_MODEM_FSK == 0))
   APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
   /* Record payload Signal to noise ratio in Lora*/
   SnrValue = LoraSnr_FskCfo;
-#endif /* USE_MODEM_LORA | USE_MODEM_FSK */
-#if ((USE_MODEM_LORA == 0) && (USE_MODEM_FSK == 1))
-  APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, Cfo=%dkHz\n\r", rssi, LoraSnr_FskCfo);
-  SnrValue = 0; /*not applicable in GFSK*/
-#endif /* USE_MODEM_LORA | USE_MODEM_FSK */
+
   /* Update the State of the FSM*/
   State = RX;
   /* Clear BufferRx*/
