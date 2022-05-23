@@ -68,7 +68,7 @@ typedef enum
 #error PAYLOAD_LEN must be less or equal than MAX_APP_BUFFER_SIZE
 #endif /* (PAYLOAD_LEN > MAX_APP_BUFFER_SIZE) */
 /* wait for remote to be in Rx, before sending a Tx frame*/
-#define RX_TIME_MARGIN                200
+#define RX_TIME_MARGIN                2000
 /* Afc bandwidth in Hz */
 #define FSK_AFC_BANDWIDTH             83333
 /* LED blink Period*/
@@ -105,9 +105,6 @@ static UTIL_TIMER_Object_t timerLed;
 /* device state. Master: true, Slave: false*/
 bool isMaster = false;
 
-/* random delay is zero - keep it for now for using the same code*/
-
-static int32_t random_delay;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -187,7 +184,6 @@ void SubghzApp_Init(void)
   Radio.Init(&RadioEvents);
 
   /* USER CODE BEGIN SubghzApp_Init_2 */
-  random_delay = 0;
 
   /* Radio Set frequency (already set to 868000000) ===========================*/
   Radio.SetChannel(RF_FREQUENCY);
@@ -196,21 +192,20 @@ void SubghzApp_Init(void)
   /* RADIO CONFIGURATION MESSAGE - BW & SF  							         */
   /*=============================================================================*/
 
-  APP_LOG(TS_OFF, VLEVEL_M, "---------------\n\r");
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_MODULATION\n\r");
+  APP_LOG(TS_OFF, VLEVEL_M, "LORA_RF_FREQ=%d MHz\n\r",RF_FREQUENCY / 1000000);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_BW=%d kHz\n\r", (1 << LORA_BANDWIDTH) * 125);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_SF=%d\n\r", LORA_SPREADING_FACTOR);
 
   /*=============================================================================*/
   /* Radio configuration: LORA, TX_PWR, BW, SF, C/R, Preamble, Payload, Timeout */
-
   /*=============================================================================*/
   /* TX : Transmitter configuration												 */
   Radio.SetTxConfig(MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
                     LORA_SPREADING_FACTOR, LORA_CODINGRATE,
                     LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
                     true, 0, 0, LORA_IQ_INVERSION_ON, TX_TIMEOUT_VALUE);
-  /*=============================================================================*/
   /* RX : Receiver configuration 												 */
   Radio.SetRxConfig(MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
                     LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
@@ -224,12 +219,15 @@ void SubghzApp_Init(void)
   memset(BufferTx, 0x0, MAX_APP_BUFFER_SIZE);
 
   /*=============================================================================*/
-  /* RECEIVING MESSAGE						  							         */
+  /* RECEIVING MESSAGE  					  							         */
   /*=============================================================================*/
-  /*starts reception - inmediately because random_delay = 0*/
-  Radio.Rx(RX_TIMEOUT_VALUE + random_delay);
-  APP_LOG(TS_OFF, VLEVEL_M, "RECEIVING ...---------------\n\r");
+  /*node starts reception*/
+  Radio.Rx(RX_TIMEOUT_VALUE);
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
+  /*=============================================================================*/
+  /* trigger "sequencer" for PingPong process  (see PingPong now)				 */
+  /*=============================================================================*/
   /*register task to to be run in while(1) after Radio IT*/
   UTIL_SEQ_RegTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), UTIL_SEQ_RFU, PingPong_Process);
 
@@ -244,7 +242,9 @@ void SubghzApp_Init(void)
 static void OnTxDone(void)
 {
   /* USER CODE BEGIN OnTxDone */
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
   APP_LOG(TS_ON, VLEVEL_L, "OnTxDone\n\r");
+
   /* Update the State of the FSM*/
   State = TX;
   /* Run PingPong process in background*/
@@ -322,18 +322,27 @@ static void OnRxError(void)
 }
 
 /* USER CODE BEGIN PrFD */
+
+/*=============================================================================*/
+/* PING PONG 		    					  							       */
+/*=============================================================================*/
+
 static void PingPong_Process(void)
 {
+  /* for reducing energy consumption?*/
   Radio.Sleep();
 
   switch (State)
   {
     case RX:
-
       if (isMaster == true)
+      /*=============================================================================*/
+      /* MASTER        	    					  							         */
+      /*=============================================================================*/
       {
-        if (RxBufferSize > 0)
+        if (RxBufferSize > 0) /* 2 Bytes*/
         {
+          /* if Master receives a PONG, it replies with a PING*/
           if (strncmp((const char *)BufferRx, PONG, sizeof(PONG) - 1) == 0)
           {
             UTIL_TIMER_Stop(&timerLed);
@@ -341,36 +350,46 @@ static void PingPong_Process(void)
             HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET); /* LED_GREEN */
             /* master toggles red led */
             HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin); /* LED_RED */
+            /*=============================================================================*/
+            /* MASTER Receiving		    					  				               */
+            /*=============================================================================*/
             /* Add delay between RX and TX */
             HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
+            APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
             /* master sends PING*/
             APP_LOG(TS_ON, VLEVEL_L, "..."
-                    "PING"
+                    "PING  - MASTER"
                     "\n\r");
-            APP_LOG(TS_ON, VLEVEL_L, "Master Tx start\n\r");
+            /*=============================================================================*/
+            /* MASTER Transmitting  		    					  				       */
+            /*=============================================================================*/
             memcpy(BufferTx, PING, sizeof(PING) - 1);
             Radio.Send(BufferTx, PAYLOAD_LEN);
           }
           else if (strncmp((const char *)BufferRx, PING, sizeof(PING) - 1) == 0)
           {
-            /* A master already exists then become a slave */
-            isMaster = false;
-            APP_LOG(TS_ON, VLEVEL_L, "Slave Rx start\n\r");
+        	/* if Master receives a PING - print an ERROR message*/
+            APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+            APP_LOG(TS_ON, VLEVEL_L, "ERROR: Master receiving a PING from another Master?\n\r");
             Radio.Rx(RX_TIMEOUT_VALUE);
           }
           else /* valid reception but neither a PING or a PONG message */
           {
-            /* Set device as master and start again */
-            isMaster = true;
-            APP_LOG(TS_ON, VLEVEL_L, "Master Rx start\n\r");
+            /* invalid reception - print an ERROR message */
+            APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+            APP_LOG(TS_ON, VLEVEL_L, "ERROR: Master receiving a invalid message\n\r");
             Radio.Rx(RX_TIMEOUT_VALUE);
           }
         }
       }
+      /*=============================================================================*/
+      /* SLAVE  		    					  							         */
+      /*=============================================================================*/
       else
       {
         if (RxBufferSize > 0)
         {
+           /* if slave receives a PING, it replies with a PONG*/
           if (strncmp((const char *)BufferRx, PING, sizeof(PING) - 1) == 0)
           {
             UTIL_TIMER_Stop(&timerLed);
@@ -378,51 +397,71 @@ static void PingPong_Process(void)
             HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET); /* LED_RED */
             /* slave toggles green led */
             HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin); /* LED_GREEN */
+            /*=============================================================================*/
+            /* SLAVE Receiving		    					  				               */
+            /*=============================================================================*/
             /* Add delay between RX and TX */
             HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
+            APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
             /*slave sends PONG*/
             APP_LOG(TS_ON, VLEVEL_L, "..."
-                    "PONG"
+                    "PONG - SLAVE"
                     "\n\r");
-            APP_LOG(TS_ON, VLEVEL_L, "Slave  Tx start\n\r");
+            /*=============================================================================*/
+            /* SLAVE Transmitting  		    					  				           */
+            /*=============================================================================*/
             memcpy(BufferTx, PONG, sizeof(PONG) - 1);
             Radio.Send(BufferTx, PAYLOAD_LEN);
           }
           else /* valid reception but not a PING as expected */
           {
-            /* Set device as master and start again */
-            isMaster = true;
-            APP_LOG(TS_ON, VLEVEL_L, "Master Rx start\n\r");
+            /* invalid reception - print an ERROR message */
+            APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+            APP_LOG(TS_ON, VLEVEL_L, "ERROR: Slave receiving a invalid message\n\r");
             Radio.Rx(RX_TIMEOUT_VALUE);
           }
         }
       }
       break;
     case TX:
-      APP_LOG(TS_ON, VLEVEL_L, "Rx start\n\r");
+      APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+      APP_LOG(TS_ON, VLEVEL_L, "... receiving \n\r");
       Radio.Rx(RX_TIMEOUT_VALUE);
       break;
     case RX_TIMEOUT:
+      APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+      APP_LOG(TS_ON, VLEVEL_L, "... RX Timeout \n\r");
     case RX_ERROR:
       if (isMaster == true)
       {
+        /*=============================================================================*/
+        /* MASTER Receiving	(again)	    					  				           */
+        /*=============================================================================*/
         /* Send the next PING frame */
         /* Add delay between RX and TX*/
-        /* add random_delay to force sync between boards after some trials*/
-        HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN + random_delay);
-        APP_LOG(TS_ON, VLEVEL_L, "Master Tx start\n\r");
+        HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
+        APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+        APP_LOG(TS_ON, VLEVEL_L, "RX ERROR: Master Re-transmission\n\r");
         /* master sends PING*/
+        /*=============================================================================*/
+        /* MASTER Transmitting  		    					  				       */
+        /*=============================================================================*/
         memcpy(BufferTx, PING, sizeof(PING) - 1);
         Radio.Send(BufferTx, PAYLOAD_LEN);
       }
       else
+      /*=============================================================================*/
+      /* SLAVE  		    					  							         */
+      /*=============================================================================*/
       {
-        APP_LOG(TS_ON, VLEVEL_L, "Slave Rx start\n\r");
+       APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+       APP_LOG(TS_ON, VLEVEL_L, "RX ERROR: waiting for a re-transmission \n\r");
         Radio.Rx(RX_TIMEOUT_VALUE);
       }
       break;
     case TX_TIMEOUT:
-      APP_LOG(TS_ON, VLEVEL_L, "Slave Rx start\n\r");
+       APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+       APP_LOG(TS_ON, VLEVEL_L, "TX Timeout: now starts the reception\n\r");
       Radio.Rx(RX_TIMEOUT_VALUE);
       break;
     default:
