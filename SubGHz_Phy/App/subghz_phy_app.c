@@ -3,7 +3,7 @@
   ******************************************************************************
   * @file    subghz_phy_app.c
   * @author  Miguel G. - adapted from original version from MCD Application Team
-  * @brief   RANGE TEST protocol (based on the Application of the SubGHz_Phy Middleware)
+  * @brief   RANGE TEST - adapted from Application of the SubGHz_Phy Middleware
   ******************************************************************************
   * @attention
   *
@@ -51,7 +51,7 @@ typedef enum
 
 /* Configurations */
 /*node ID*/
-#define NODE_ID              		  02	/* 00 is master - otherwise is slave */
+#define NODE_ID              		  00	/* 00 is master - otherwise is slave */
 
 /*Timeout*/
 #define RX_TIMEOUT_VALUE              3000
@@ -59,7 +59,7 @@ typedef enum
 
 /* CONFIG string*/
 #define CONFIG "01"
-#define OWN_ID "02"
+#define OWN_ID "00"
 /* PROBE string*/
 #define PROBE "PROBE"
 /* PROBE string*/
@@ -243,6 +243,7 @@ static void OnTxDone(void)
 
   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
   APP_LOG(TS_ON, VLEVEL_L, "OnTxDone\n\r");
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
   /* Run PingPong process in background*/
   UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
@@ -259,6 +260,8 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
   APP_LOG(TS_ON, VLEVEL_L, "OnRxDone \n\r");
   APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+
   /* Record payload Signal to noise ratio in Lora*/
   SnrValue = LoraSnr_FskCfo;
 
@@ -298,6 +301,7 @@ static void OnTxTimeout(void)
 
   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
   APP_LOG(TS_ON, VLEVEL_L, "OnTxTimeout \n\r");
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
   /* Run PingPong process in background*/
   UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
@@ -313,6 +317,7 @@ static void OnRxTimeout(void)
 
   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
   APP_LOG(TS_ON, VLEVEL_L, "OnRxTimeout \n\r");
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
   /* Run PingPong process in background*/
   UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
@@ -344,12 +349,10 @@ static void PingPong_Process(void)
 
   switch (State)
   {
- /* ====== RECEPTION =====================================================================================*/
- /* ======================================================================================================*/
    case RX:
 	   if (isMaster == true)
 	   {
-        if (RxBufferSize > 0) // if has received something
+        if (RxBufferSize > 0) // it if has received something
         {
           /* Master receiving a REPORT */
           //if (strncmp((const char *)BufferRx, REPORT, sizeof(REPORT) - 1) == 0) // -1 to exclude terminating '\0
@@ -358,7 +361,6 @@ static void PingPong_Process(void)
       	  /* DELAY: wake-up time + giving time to the remote node to be in Rx*/
       	  HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
 
-    	  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
     	  //APP_LOG(TS_ON, VLEVEL_L, "Receiving REPORT packet \n\r");
     	  APP_LOG(TS_ON, VLEVEL_L, "Receiving PROBE packet \n\r");
     	  // need to do something with report package here, save it
@@ -369,7 +371,6 @@ static void PingPong_Process(void)
           else
           {
             /* invalid reception - print an ERROR message */
-            APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
             APP_LOG(TS_ON, VLEVEL_L, "ERROR: Master receiving a invalid message\n\r");
             Radio.Rx(RX_TIMEOUT_VALUE);
             // this is just to check it can receive a PROBE an is not an error
@@ -394,7 +395,6 @@ static void PingPong_Process(void)
             /* time wake-up from sleep + time the remote node needs to be in Rx (margin)*/
             //HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
 
-      	    APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
       	    APP_LOG(TS_ON, VLEVEL_L, "Sending a PROBE packet \n\r");
 
             memcpy(BufferTx, PROBE, sizeof(PROBE) - 1);
@@ -405,7 +405,6 @@ static void PingPong_Process(void)
           else if ((strncmp((const char *)BufferRx, PROBE, sizeof(PROBE) - 1) == 0))
 		  {
               /* this value needs to be saved and reported */
-              APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
         	  APP_LOG(TS_ON, VLEVEL_L, "Sending a REPORT packet \n\r");
 
               UTIL_TIMER_Stop(&timerLed);
@@ -417,10 +416,9 @@ static void PingPong_Process(void)
               Radio.Send(BufferTx, PAYLOAD_LEN);
 
 		  }
-          else /* valid reception but if not a CONFIG is a PROBE, thus send a REPORT */
+          else /* valid reception but not a CONFIG or PROBE, thus is a REPORT */
           {
             /* invalid reception - print an ERROR message */
-            APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
       	    APP_LOG(TS_ON, VLEVEL_L, "report or something else, do nothing \n\r");
       	   Radio.Rx(RX_TIMEOUT_VALUE);
           }
@@ -430,12 +428,9 @@ static void PingPong_Process(void)
         }
       }
       break;
-      /* ====== TRANSMISSION ==========================================================================*/
-      /* ==============================================================================================*/
    case TX:
            if (isMaster == true)
            {
-         	  /* DELAY: wake-up time + giving time to the remote node to be in Rx*/
          	  HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
 
          	  /* MASTER transmitting - red led "on"  */
@@ -450,8 +445,6 @@ static void PingPong_Process(void)
          	  memcpy(BufferTx, CONFIG, sizeof(CONFIG) - 1);
          	  Radio.Send(BufferTx, PAYLOAD_LEN);
 
-         	 Radio.Rx(RX_TIMEOUT_VALUE);
-
            }else // slaves transmit either a PROBE or a REPORT depending on what message they receive
            {
         	  /* DELAY: wake-up time + giving time to the remote node to be in Rx*/
@@ -462,7 +455,6 @@ static void PingPong_Process(void)
                HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET); /* LED_RED - off */
                HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin); /* LED_GREEN - on */
 
-         	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
          	   APP_LOG(TS_ON, VLEVEL_L, "A message was just sent by a slave node \n\r");
 
          	  // Transmissions of PROBE or REPORT will be made on the RX state?
