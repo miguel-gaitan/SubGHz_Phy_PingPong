@@ -4,15 +4,6 @@
   * @file    subghz_phy_app.c
   * @author  Miguel G. - adapted from original version from MCD Application Team
   * @brief   RANGE TEST - adapted from Application of the SubGHz_Phy Middleware
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2021 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
   */
@@ -39,7 +30,6 @@ typedef enum
 {
   RX,
   RX_TIMEOUT,
-  RX_ERROR,
   TX,
   TX_TIMEOUT,
 } States_t;
@@ -50,19 +40,14 @@ typedef enum
 /* USER CODE BEGIN PD */
 
 /* Configurations */
-/*node ID*/
 #define NODE_ID              		  00	/* 00 is master - otherwise is slave */
 
-/*Timeout*/
 #define RX_TIMEOUT_VALUE              3000
 #define TX_TIMEOUT_VALUE              3000
 
-/* CONFIG string*/
 #define CONFIG "01"
 #define OWN_ID "00"
-/* PROBE string*/
 #define PROBE "PROBE"
-/* PROBE string*/
 #define REPORT "REPORT"
 
 /*Size of the payload to be sent*/
@@ -106,10 +91,7 @@ bool isMaster = false;
 bool isMaster = true;
 #endif
 
-/* Probe ID - it is the ID of the node (could be own) to transmit the Probe*/
-int8_t Probe_ID = 0;	/* 0: means not defined the probe yet */
-/* Report ID - it is the ID of the node (could be own) to transmit the Report*/
-int8_t Report_ID = 0;	/* 0: means not defined the report yet */
+bool isProbeRcvd = true;
 
 /* USER CODE END PV */
 
@@ -138,11 +120,6 @@ static void OnTxTimeout(void);
   * @brief Function executed on Radio Rx Timeout event
   */
 static void OnRxTimeout(void);
-
-/**
-  * @brief Function executed on Radio Rx Error event
-  */
-static void OnRxError(void);
 
 /* USER CODE BEGIN PFP */
 /**
@@ -177,9 +154,6 @@ void SubghzApp_Init(void)
   RadioEvents.RxDone = OnRxDone;
   RadioEvents.TxTimeout = OnTxTimeout;
   RadioEvents.RxTimeout = OnRxTimeout;
-  RadioEvents.RxError = OnRxError;
-
-  /* current radio status */
   Radio.Init(&RadioEvents);
 
   /* USER CODE BEGIN SubghzApp_Init_2 */
@@ -194,7 +168,6 @@ void SubghzApp_Init(void)
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_RF_FREQ = %d MHz\n\r",RF_FREQUENCY / 1000000);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_BW = %d kHz\n\r", (1 << LORA_BANDWIDTH) * 125);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_SF = %d\n\r", LORA_SPREADING_FACTOR);
-
 
   /* Radio configuration: LORA, TX_PWR, BW, SF, C/R, Preamble, Payload, Timeout */
   /* TX : Transmitter configuration---------------------------------------------*/
@@ -218,15 +191,14 @@ void SubghzApp_Init(void)
   {/* If Slave ---------------------------------------------------------------------*/
 	  //State = RX;	/*FSM is already in RX*/
 	  APP_LOG(TS_OFF, VLEVEL_M, "--------SLAVE---------\n\r");
-	  Radio.Rx(RX_TIMEOUT_VALUE);
   }
   else
   {/* If Master --------------------------------------------------------------------*/
 	  //State = TX; 	/* Update the State of the FSM*/
 	  APP_LOG(TS_OFF, VLEVEL_M, "--------MASTER---------\n\r");
-	  Radio.Rx(RX_TIMEOUT_VALUE);
   }
 
+  Radio.Rx(5000); //time out
   /*register task to to be run in while(1) after Radio IT*/
   UTIL_SEQ_RegTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), UTIL_SEQ_RFU, PingPong_Process);
 
@@ -238,34 +210,45 @@ static void OnTxDone(void)
 {
   /* USER CODE BEGIN OnTxDone */
 
-  /* Update the State of the FSM*/
-  State = TX;
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+  APP_LOG(TS_ON, VLEVEL_L, "OnTxDone \n\r");
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-  APP_LOG(TS_ON, VLEVEL_L, "OnTxDone\n\r");
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+  /* Clear (prior) BufferRx*/
+  //memset(BufferRx, 0, MAX_APP_BUFFER_SIZE);
+
+  /* Update the State of the FSM*/
+  State = RX;
 
   /* Run PingPong process in background*/
   UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
   /* USER CODE END OnTxDone */
 }
 
-static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo)
+static void OnTxTimeout(void)
 {
-  /* USER CODE BEGIN OnRxDone */
+  /* USER CODE BEGIN OnTxTimeout */
+
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+  APP_LOG(TS_ON, VLEVEL_L, "OnTxTimeout \n\r");
+  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
   /* Update the State of the FSM*/
   State = RX;
 
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-  APP_LOG(TS_ON, VLEVEL_L, "OnRxDone \n\r");
-  APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+  /* Run PingPong process in background*/
+  UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
+  /* USER CODE END OnTxTimeout */
+}
+
+static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo)
+{
+  /* USER CODE BEGIN OnRxDone */
 
   /* Record payload Signal to noise ratio in Lora*/
   SnrValue = LoraSnr_FskCfo;
 
-  /* Clear BufferRx*/
+  /* Clear (prior) BufferRx*/
   memset(BufferRx, 0, MAX_APP_BUFFER_SIZE);
   /* Record payload size*/
   RxBufferSize = size;
@@ -276,7 +259,9 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
   /* Record Received Signal Strength*/
   RssiValue = rssi;
   /* Record payload content*/
-  APP_LOG(TS_ON, VLEVEL_H, "payload. size=%d \n\r", size);
+  //APP_LOG(TS_ON, VLEVEL_H, "payload. size=%d \n\r", size);
+  APP_LOG(TS_ON, VLEVEL_L, "payload. size=%d \n\r", size);
+
   for (int i = 0; i < PAYLOAD_LEN; i++)
   {
     APP_LOG(TS_OFF, VLEVEL_H, "%02X", BufferRx[i]);
@@ -287,55 +272,86 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
   }
   APP_LOG(TS_OFF, VLEVEL_H, "\n\r");
 
+
+	if (isMaster == true)
+	{
+		if (strncmp((const char *)BufferRx, REPORT, sizeof(REPORT) - 1) == 0)
+		{
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "OnRxDone -- MASTER: REPORT \n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+
+			State = RX;
+		}
+		else
+		{
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "OnRxDone -- MASTER: something else \n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+
+			State = RX;
+		}
+	}
+	else // if it is a slave
+	{
+		if (strncmp((const char *)BufferRx, PROBE, sizeof(PROBE) - 1) == 0)
+		{
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "OnRxDone -- SLAVE: PROBE\n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+
+			isProbeRcvd = true;
+			State = TX;
+		}
+		else if (strncmp((const char *)BufferRx, OWN_ID, sizeof(OWN_ID) - 1) == 0)
+		{
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "OnRxDone -- SLAVE: CONFIG (OWN ID)\n\r");
+			APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
+			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+
+			isProbeRcvd = false;
+			State = TX;
+		}
+		else
+		{
+			State = RX;
+		}
+	}
+
+
+	/* Clear (prior) BufferRx*/
+	memset(BufferRx, 0, MAX_APP_BUFFER_SIZE);
+
   /* Run PingPong process in background*/
   UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
+
   /* USER CODE END OnRxDone */
-}
-
-static void OnTxTimeout(void)
-{
-  /* USER CODE BEGIN OnTxTimeout */
-
-  /* Update the State of the FSM*/
-  State = TX_TIMEOUT;
-
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-  APP_LOG(TS_ON, VLEVEL_L, "OnTxTimeout \n\r");
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-
-  /* Run PingPong process in background*/
-  UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
-  /* USER CODE END OnTxTimeout */
 }
 
 static void OnRxTimeout(void)
 {
   /* USER CODE BEGIN OnRxTimeout */
 
-  /* Update the State of the FSM*/
-  State = RX_TIMEOUT;
+	APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+	APP_LOG(TS_ON, VLEVEL_L, "OnRxTimeout \n\r");
+	APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-  APP_LOG(TS_ON, VLEVEL_L, "OnRxTimeout \n\r");
-  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+	if (isMaster == true)
+	{
+		State = TX;
+	}
+	else // slave
+	{
+		State = RX;
+	}
 
   /* Run PingPong process in background*/
   UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
   /* USER CODE END OnRxTimeout */
-}
-
-static void OnRxError(void)
-{
-
-  /* Update the State of the ~*/
-  State = RX_ERROR;
-
-  /* USER CODE BEGIN OnRxError */
-  APP_LOG(TS_ON, VLEVEL_L, "OnRxError\n\r");
-
-  /* Run PingPong process in background*/
-  UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_SubGHz_Phy_App_Process), CFG_SEQ_Prio_0);
-  /* USER CODE END OnRxError */
 }
 
 /* USER CODE BEGIN PrFD */
@@ -344,56 +360,98 @@ static void OnRxError(void)
 static void PingPong_Process(void)
 {
   Radio.Sleep();
-  /* USER CODE BEGIN OnRxError */
   APP_LOG(TS_ON, VLEVEL_L, "radio sleep\n\r");
 
   switch (State)
   {
+   case RX_TIMEOUT:
+	   APP_LOG(TS_ON, VLEVEL_L, "CASE - RX_TIMEOUT \n\r");
+	   Radio.Rx(RX_TIMEOUT_VALUE);
+	   break;
+   case TX:
+	   APP_LOG(TS_ON, VLEVEL_L, "CASE - TX \n\r");
+           if (isMaster == true)
+           {
+               UTIL_TIMER_Stop(&timerLed);
+               HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+               HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin); /* LED_RED - on*/
+
+         	   memcpy(BufferTx, CONFIG, sizeof(CONFIG) - 1);
+         	   Radio.Send(BufferTx, PAYLOAD_LEN);
+
+         	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+         	   APP_LOG(TS_ON, VLEVEL_L, "CONFIG packet sent \n\r");
+
+
+           }else // slaves transmit either a PROBE or a REPORT depending on what message they received
+           {
+               if (isProbeRcvd == true) // then transmit a REPORT
+               {
+                   UTIL_TIMER_Stop(&timerLed);
+                   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET); // red off
+                   HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET); // green off
+                   HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin); /* LED_BLUE - on */
+
+                   memcpy(BufferTx, REPORT, sizeof(REPORT) - 1);
+                   Radio.Send(BufferTx, PAYLOAD_LEN);
+
+             	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+             	   APP_LOG(TS_ON, VLEVEL_L, "REPORT packet sent \n\r");
+               }
+               else //transmit a PROBE
+               {
+                   UTIL_TIMER_Stop(&timerLed);
+                   HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET); //blue off
+                   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET); // red off
+                   HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin); /* LED_GREEN - on */
+
+                   memcpy(BufferTx, PROBE, sizeof(PROBE) - 1);
+                   Radio.Send(BufferTx, PAYLOAD_LEN);
+
+             	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+             	   APP_LOG(TS_ON, VLEVEL_L, "PROBE packet sent \n\r");
+
+               }
+
+        	   /* DELAY: wake-up time + giving time to the remote node to be in Rx*/
+        	  //HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
+
+           }
+        break;
+   case TX_TIMEOUT:
+     APP_LOG(TS_ON, VLEVEL_L, "CASE - TX_TIMEOUT \n\r");
+     break;
    case RX:
+	   APP_LOG(TS_ON, VLEVEL_L, "CASE - RX \n\r");
 	   if (isMaster == true)
 	   {
-        if (RxBufferSize > 0) // it if has received something
+		Radio.Rx(RX_TIMEOUT_VALUE);
+        if (RxBufferSize > 0)
         {
-          /* Master receiving a REPORT */
-          //if (strncmp((const char *)BufferRx, REPORT, sizeof(REPORT) - 1) == 0) // -1 to exclude terminating '\0
-          if (strncmp((const char *)BufferRx, PROBE, sizeof(PROBE) - 1) == 0) // -1 to exclude terminating '\0
-          {
-      	  /* DELAY: wake-up time + giving time to the remote node to be in Rx*/
-      	  HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
-
-    	  //APP_LOG(TS_ON, VLEVEL_L, "Receiving REPORT packet \n\r");
-    	  APP_LOG(TS_ON, VLEVEL_L, "Receiving PROBE packet \n\r");
-    	  // need to do something with report package here, save it
-    	  // then nothing else I guess
-    	  Radio.Rx(RX_TIMEOUT_VALUE);
-
-          }/* Master receiving something else */
-          else
-          {
-            /* invalid reception - print an ERROR message */
-            APP_LOG(TS_ON, VLEVEL_L, "ERROR: Master receiving a invalid message\n\r");
-            Radio.Rx(RX_TIMEOUT_VALUE);
-            // this is just to check it can receive a PROBE an is not an error
-          }
+        	APP_LOG(TS_ON, VLEVEL_L, "RxBuffer bigger than zero \n\r");
+        	//Radio.Rx(RX_TIMEOUT_VALUE); //time out
         }
-        else{//
-        	  APP_LOG(TS_ON, VLEVEL_L, "RxBuffer is zero - probably starting the experiment\n\r");
+        else
+        {
+        	APP_LOG(TS_ON, VLEVEL_L, "RxBuffer is zero \n\r");
+        	//Radio.Rx(RX_TIMEOUT_VALUE);
         }
       }
       /* SLAVE ---------------------------------------------------------------*/
       else
       {
+    	Radio.Rx(RX_TIMEOUT_VALUE);
         if (RxBufferSize > 0)
         {
           //  <== ADD COMPARISON WITH OWN NODE ID
           if (strncmp((const char *)BufferRx, OWN_ID, sizeof(OWN_ID) - 1) == 0)
           {
+
+        	//HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
+
             UTIL_TIMER_Stop(&timerLed);
             HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET); /* LED_RED - off */
             HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin); /* LED_GREEN - on */
-
-            /* time wake-up from sleep + time the remote node needs to be in Rx (margin)*/
-            //HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
 
       	    APP_LOG(TS_ON, VLEVEL_L, "Sending a PROBE packet \n\r");
 
@@ -427,59 +485,6 @@ static void PingPong_Process(void)
         	  APP_LOG(TS_ON, VLEVEL_L, "RxBuffer is zero - probably starting the experiment\n\r");
         }
       }
-      break;
-   case TX:
-           if (isMaster == true)
-           {
-         	  HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
-
-         	  /* MASTER transmitting - red led "on"  */
-               UTIL_TIMER_Stop(&timerLed);
-               HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET); /* LED_GREEN - off */
-               HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin); /* LED_RED - on*/
-
-         	  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-         	  APP_LOG(TS_ON, VLEVEL_L, "Sending CONFIG packet \n\r");
-
-         	  // this puts a CONFIG message in the tx buffer and then sends it
-         	  memcpy(BufferTx, CONFIG, sizeof(CONFIG) - 1);
-         	  Radio.Send(BufferTx, PAYLOAD_LEN);
-
-           }else // slaves transmit either a PROBE or a REPORT depending on what message they receive
-           {
-        	  /* DELAY: wake-up time + giving time to the remote node to be in Rx*/
-        	  HAL_Delay(Radio.GetWakeupTime() + RX_TIME_MARGIN);
-
-         	  /* SLAVE transmitting - red led "on"  */
-               UTIL_TIMER_Stop(&timerLed);
-               HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET); /* LED_RED - off */
-               HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin); /* LED_GREEN - on */
-
-         	   APP_LOG(TS_ON, VLEVEL_L, "A message was just sent by a slave node \n\r");
-
-         	  // Transmissions of PROBE or REPORT will be made on the RX state?
-
-         	  Radio.Rx(RX_TIMEOUT_VALUE);
-           }
-        break;
-    case RX_TIMEOUT:
-    case RX_ERROR:
-      if (isMaster == true)
-      {
-    	APP_LOG(TS_ON, VLEVEL_L, "Why not sending a packet \n\r");
-        /* master sends what is in the buffer_tx*/
-        memcpy(BufferTx, CONFIG, sizeof(CONFIG) - 1);
-        Radio.Send(BufferTx, PAYLOAD_LEN);
-      }
-      else // slave
-      {
-       // wait until the next rx time-out
-       Radio.Rx(RX_TIMEOUT_VALUE);
-      }
-      break;
-    case TX_TIMEOUT:
-      // listen until the next rx time-out
-      Radio.Rx(RX_TIMEOUT_VALUE);
       break;
     default:
       break;
