@@ -40,12 +40,12 @@ typedef enum
 /* USER CODE BEGIN PD */
 
 /* Configurations */
-#define NODE_ID              		  1	/* 0 is master - otherwise is slave */
+#define NODE_ID              		  7	/* 0 is master - otherwise is slave */
 
 #define RX_TIMEOUT_VALUE              3000
 #define TX_TIMEOUT_VALUE              3000
 
-#define OWN_ID "1"
+#define OWN_ID "7"
 #define PROBE "PROBE"
 #define REPORT "REPORT"
 
@@ -84,10 +84,15 @@ static UTIL_TIMER_Object_t timerLed;
 
 char SrcID = '0';
 
-int8_t Number_of_Slaves = 2;	// used by the counter
+int8_t NofSlaves = 7;			// used by the counter
 int8_t Counter = 1;				// counter
 char ConfigCount[1] = "1";		// counter (in char format)
-char OwnID[1] = "1";
+char OwnID[1] = "7";
+
+int OwnID_int;
+int SrcID_int;
+int DelayFactor;
+
 char ProbeMsg[2] = "PX";			// suffix of probe messages
 char ReportMsg[3] = "RXY";			// suffix of probe messages
 
@@ -262,7 +267,6 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
 		memcpy(BufferRx, payload, RxBufferSize); 	// copy payload into the BufferRx
 		}
 
-
 	if (isMaster == true)
 	{
 		if (strncmp((const char *)BufferRx, ReportMsg, 1) == 0)
@@ -371,7 +375,7 @@ static void PingPong_Process(void)
          	   APP_LOG(TS_ON, VLEVEL_L, "CONFIG packet sent=%s\n\r", ConfigCount);
 
          	  /* update the CONFIG counter, i.e. next node to transmit the probe*/
-         	   if (Counter < Number_of_Slaves)
+         	   if (Counter < NofSlaves)
          	   {
          		   Counter = Counter + 1;
          	   }
@@ -399,6 +403,22 @@ static void PingPong_Process(void)
              	  ReportMsg[2] = OwnID[0];
 
                   memcpy(BufferTx, ReportMsg, sizeof(ReportMsg));
+
+                  SrcID_int = SrcID -'0';
+                  OwnID_int = OwnID[0] -'0';
+
+                  /*--- DELAY ---*/
+                  if (OwnID_int > SrcID_int)
+				  {
+                	  DelayFactor = OwnID_int - SrcID_int - 1;
+                	  APP_LOG(TS_ON, VLEVEL_L, "Delay factor 1 = %d \n\r",DelayFactor);
+				  }
+                  else
+                  {
+                	  DelayFactor = NofSlaves - SrcID_int + OwnID_int - 1;
+                	  APP_LOG(TS_ON, VLEVEL_L, "Delay factor 2 = %d \n\r",DelayFactor);
+                  }
+                  HAL_Delay(Radio.GetWakeupTime() + DelayFactor*RX_TIMEOUT_VALUE );
                   Radio.Send(BufferTx, PAYLOAD_LEN);
                }
                else // it was a CONFIG
@@ -413,7 +433,6 @@ static void PingPong_Process(void)
              	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
              	   APP_LOG(TS_ON, VLEVEL_L, "PROBE %s packet sent \n\r",ProbeMsg);
 
-                   //memcpy(BufferTx, PROBE, sizeof(PROBE) - 1);
                    memcpy(BufferTx, ProbeMsg, sizeof(ProbeMsg));
                    Radio.Send(BufferTx, PAYLOAD_LEN);
                }
