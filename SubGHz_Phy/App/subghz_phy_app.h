@@ -109,7 +109,7 @@ extern "C" {
 #error "Please define a modem in the compiler subghz_phy_app.h."
 #endif /* USE_MODEM_LORA | USE_MODEM_FSK */
 
-#define PAYLOAD_LEN                                 64
+#define PAYLOAD_LEN                                 12
 
 /* USER CODE BEGIN EC */
 

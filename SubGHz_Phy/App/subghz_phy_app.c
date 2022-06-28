@@ -39,24 +39,17 @@ typedef enum
 
 /* USER CODE BEGIN PD */
 
-/* Configurations */
-#define NODE_ID              		  7	/* 0 is master - otherwise is slave */
+#define NODE_ID              		  0	/* 0 is master - otherwise is slave */
+#define N_OF_SLAVES					  3
 
-#define RX_TIMEOUT_VALUE              3000
-#define TX_TIMEOUT_VALUE              3000
+#define RX_TIMEOUT_VALUE              1500
+#define TX_TIMEOUT_VALUE              1500
 
-#define OWN_ID "7"
-#define PROBE "PROBE"
-#define REPORT "REPORT"
-
-/*Size of the payload to be sent*/
-/* Size must be greater of equal the PING and PONG*/
+/*Max size of the payload to be sent*/
 #define MAX_APP_BUFFER_SIZE          255
 #if (PAYLOAD_LEN > MAX_APP_BUFFER_SIZE)
 #error PAYLOAD_LEN must be less or equal than MAX_APP_BUFFER_SIZE
 #endif /* (PAYLOAD_LEN > MAX_APP_BUFFER_SIZE) */
-/* wait for remote to be in Rx, before sending a Tx frame*/
-#define RX_TIME_MARGIN               1000
 
 /* LED blink Period*/
 #define LED_PERIOD_MS                200
@@ -68,14 +61,11 @@ typedef enum
 static RadioEvents_t RadioEvents;
 /* USER CODE BEGIN PV */
 
-/*Ping Pong FSM states */
 static States_t State = RX;
-/* App Rx & Tx Buffers*/
 static uint8_t BufferRx[MAX_APP_BUFFER_SIZE];
 static uint8_t BufferTx[MAX_APP_BUFFER_SIZE];
-/* Last  Received Buffer Size*/
+
 uint16_t RxBufferSize = 0;
-/* Last  Received packets: Rssi & SNR*/
 int8_t RssiValue = 0;
 int8_t SnrValue = 0;
 
@@ -83,20 +73,27 @@ int8_t SnrValue = 0;
 static UTIL_TIMER_Object_t timerLed;
 
 char SrcID = '0';
+//int SrcID_int;
+int8_t SrcID_int;
 
-int8_t NofSlaves = 7;			// used by the counter
-int8_t Counter = 1;				// counter
+char OwnID[1];
+//int OwnID_int;
+int8_t OwnID_int;
+
 char ConfigCount[1] = "1";		// counter (in char format)
-char OwnID[1] = "7";
+int8_t CounterTx = 1;				// counter
+int8_t CounterRx = 1;				// counter
 
-int OwnID_int;
-int SrcID_int;
-int DelayFactor;
+//int DelayFactor;
+int8_t DelayFactor;
+int8_t NofSlaves;
+//int NofSlaves;
 
 char ProbeMsg[2] = "PX";			// suffix of probe messages
 char ReportMsg[3] = "RXY";			// suffix of probe messages
 
 /* device state. Master: true, Slave: false*/
+
 #if NODE_ID > 0
 bool isMaster = false;
 #else
@@ -146,7 +143,6 @@ static void OnledEvent(void *context);
 static void PingPong_Process(void);
 /* USER CODE END PFP */
 
-
 /* Exported functions ---------------------------------------------------------*/
 void SubghzApp_Init(void)
 {
@@ -170,36 +166,38 @@ void SubghzApp_Init(void)
 
   /* USER CODE BEGIN SubghzApp_Init_2 */
 
+  OwnID_int = NODE_ID;
+  NofSlaves = N_OF_SLAVES;
+  OwnID[0] = OwnID_int +'0';
+
   /* Radio Set frequency (already set to 868000000) */
   Radio.SetChannel(RF_FREQUENCY);
 
   /* RADIO CONFIGURATION MESSAGE - BW & SF  */
   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_MODULATION\n\r");
-  APP_LOG(TS_OFF, VLEVEL_M, "NODE_ID = %d\n\r", NODE_ID);
+  APP_LOG(TS_OFF, VLEVEL_M, "NODE_ID = %s\n\r", OwnID);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_RF_FREQ = %d MHz\n\r",RF_FREQUENCY / 1000000);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_BW = %d kHz\n\r", (1 << LORA_BANDWIDTH) * 125);
   APP_LOG(TS_OFF, VLEVEL_M, "LORA_SF = %d\n\r", LORA_SPREADING_FACTOR);
 
-  /* Radio configuration: LORA, TX_PWR, BW, SF, C/R, Preamble, Payload, Timeout */
+  /* Radio configuration: LORA, TX_PWR, BW, SF, C/R, Preamble, Payload, CRC off, Timeout */
   /* TX : Transmitter configuration---------------------------------------------*/
   Radio.SetTxConfig(MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
                     LORA_SPREADING_FACTOR, LORA_CODINGRATE,
                     LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
-                    true, 0, 0, LORA_IQ_INVERSION_ON, TX_TIMEOUT_VALUE);
+                    0, 0, 0, LORA_IQ_INVERSION_ON, TX_TIMEOUT_VALUE);
   /* RX : Receiver configuration-------------------------------------------------*/
   Radio.SetRxConfig(MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
                     LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
                     LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
-                    0, true, 0, 0, LORA_IQ_INVERSION_ON, true);
+                    0, 0, 0, 0, LORA_IQ_INVERSION_ON, true);
 
-  /*max payload length = 255 Bytes (previously defined) */
   Radio.SetMaxPayloadLength(MODEM_LORA, MAX_APP_BUFFER_SIZE);
 
-  /*fills Tx buffer with zeros*/
   memset(BufferTx, 0x0, MAX_APP_BUFFER_SIZE);
 
-  if (NODE_ID > 0)
+  if (NODE_ID> 0)
   {/* If Slave ---------------------------------------------------------------------*/
 	  //State = RX;	/*FSM is already in RX*/
 	  APP_LOG(TS_OFF, VLEVEL_M, "--------SLAVE---------\n\r");
@@ -275,11 +273,25 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
 			APP_LOG(TS_ON, VLEVEL_L, "OnRxDone -- MASTER: REPORT \n\r");
 			APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
 			APP_LOG(TS_ON, VLEVEL_L, "BufferRx=%s \n\r", (char*) BufferRx);
+			APP_LOG(TS_ON, VLEVEL_L, "Buffer size = %d \n\r", RxBufferSize);
 			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
 			//here I need to do something with the REPORT
 
-			State = RX;
+			if (CounterRx < NofSlaves)
+			{
+				APP_LOG(TS_ON, VLEVEL_L, "COUNTER RX = %d \n\r",CounterRx);
+				CounterRx = CounterRx + 1;
+				State = RX;
+			}
+			else
+			{
+				APP_LOG(TS_ON, VLEVEL_L, "COUNTER RX = %d (next TX) \n\r",CounterRx);
+				CounterRx = 1;
+				State = TX;
+			}
+
+			//State = RX;
 		}
 		else
 		{
@@ -289,7 +301,20 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
 			APP_LOG(TS_ON, VLEVEL_L, "BufferRx=%s \n\r", (char*) BufferRx);
 			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
 
-			State = RX;
+			if (CounterRx < NofSlaves)
+			{
+				APP_LOG(TS_ON, VLEVEL_L, "COUNTER RX = %d \n\r",CounterRx);
+				CounterRx = CounterRx + 1;
+				State = RX;
+			}
+			else
+			{
+				APP_LOG(TS_ON, VLEVEL_L, "COUNTER RX = %d (next TX) \n\r",CounterRx);
+				CounterRx = 1;
+				State = TX;
+			}
+
+			//State = RX;
 		}
 	}
 	/* SLAVE ---------------------------------------------------------*/
@@ -305,12 +330,13 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
 
 			isProbeRcvd = true;
 			SrcID = (char) BufferRx[1];
+
 			State = TX;
 		}
 		else if (strncmp((const char *)BufferRx, OwnID, sizeof(OwnID)) == 0)
 		{
 			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-			APP_LOG(TS_ON, VLEVEL_L, "OnRxDone -- SLAVE: CONFIG (OWN_ID=%s)\n\r",OWN_ID);
+			APP_LOG(TS_ON, VLEVEL_L, "OnRxDone -- SLAVE: CONFIG (OwnID=%s)\n\r",OwnID);
 			APP_LOG(TS_ON, VLEVEL_L, "RssiValue=%d dBm, SnrValue=%ddB\n\r", rssi, LoraSnr_FskCfo);
 			APP_LOG(TS_ON, VLEVEL_L, "BufferRx =%s \n\r", (char*) BufferRx);
 			APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
@@ -320,6 +346,9 @@ static void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraS
 		}
 		else
 		{
+			APP_LOG(TS_ON, VLEVEL_L, "Check: BufferRx =%s and ProbeMsg =%s \n\r", (const char*) BufferRx,ProbeMsg);
+			APP_LOG(TS_ON, VLEVEL_L, "Buffer size = %d \n\r", RxBufferSize);
+
 			State = RX;
 		}
 	}
@@ -340,7 +369,18 @@ static void OnRxTimeout(void)
 
 	if (isMaster == true)
 	{
-		State = TX;
+		if (CounterRx < NofSlaves)
+		{
+			APP_LOG(TS_ON, VLEVEL_L, "COUNTER RX = %d \n\r",CounterRx);
+			CounterRx = CounterRx + 1;
+			State = RX;
+		}
+		else
+		{
+			APP_LOG(TS_ON, VLEVEL_L, "COUNTER RX = %d (next TX) \n\r",CounterRx);
+			CounterRx = 1;
+			State = TX;
+		}
 	}
 	else // slave
 	{
@@ -374,35 +414,26 @@ static void PingPong_Process(void)
          	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
          	   APP_LOG(TS_ON, VLEVEL_L, "CONFIG packet sent=%s\n\r", ConfigCount);
 
-         	  /* update the CONFIG counter, i.e. next node to transmit the probe*/
-         	   if (Counter < NofSlaves)
+         	   if (CounterTx < NofSlaves)
          	   {
-         		   Counter = Counter + 1;
+         		   CounterTx = CounterTx + 1;
          	   }
          	   else
          	   {
-         		   Counter = 1;
+         		   CounterTx = 1;
          	   }
-         	   ConfigCount[0] = Counter+'0';
+         	   ConfigCount[0] = CounterTx+'0';
          	   APP_LOG(TS_ON, VLEVEL_L, "Next node to transmit=%s\n\r", ConfigCount);
 
            }else // SLAVE
            {
                if (isProbeRcvd == true)
                {
-                   UTIL_TIMER_Stop(&timerLed);
-                   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
-                   HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
-                   HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin); /* LED_BLUE - on */
 
-             	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
-             	   APP_LOG(TS_ON, VLEVEL_L, "REPORT packet sent \n\r");
-
-             	  //strcat(ReportMsg, (char*) OwnID);
-             	  ReportMsg[1] = SrcID;
+            	  ReportMsg[1] = SrcID;
              	  ReportMsg[2] = OwnID[0];
 
-                  memcpy(BufferTx, ReportMsg, sizeof(ReportMsg));
+                  memcpy(BufferTx, ReportMsg, 3);
 
                   SrcID_int = SrcID -'0';
                   OwnID_int = OwnID[0] -'0';
@@ -411,30 +442,39 @@ static void PingPong_Process(void)
                   if (OwnID_int > SrcID_int)
 				  {
                 	  DelayFactor = OwnID_int - SrcID_int - 1;
-                	  APP_LOG(TS_ON, VLEVEL_L, "Delay factor 1 = %d \n\r",DelayFactor);
+                	  APP_LOG(TS_ON, VLEVEL_L, "Delay factor 1 = OwnID %d - SrcID %d - 1 = %d \n\r",OwnID_int,SrcID_int,DelayFactor);
 				  }
                   else
                   {
                 	  DelayFactor = NofSlaves - SrcID_int + OwnID_int - 1;
-                	  APP_LOG(TS_ON, VLEVEL_L, "Delay factor 2 = %d \n\r",DelayFactor);
+                	  APP_LOG(TS_ON, VLEVEL_L, "Delay factor 2 = NofSlaves %d - OwnID %d - SrcID %d - 1 = %d \n\r",NofSlaves, OwnID_int,SrcID_int,DelayFactor);
                   }
                   HAL_Delay(Radio.GetWakeupTime() + DelayFactor*RX_TIMEOUT_VALUE );
                   Radio.Send(BufferTx, PAYLOAD_LEN);
+
+                  UTIL_TIMER_Stop(&timerLed);
+                  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+                  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin); /* LED_BLUE - on */
+
+                  APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
+                  APP_LOG(TS_ON, VLEVEL_L, "REPORT packet sent \n\r");
                }
                else // it was a CONFIG
                {
+
+            	   ProbeMsg[1] = OwnID[0];
+                   memcpy(BufferTx, ProbeMsg, 2);
+                   Radio.Send(BufferTx, PAYLOAD_LEN);
+
                    UTIL_TIMER_Stop(&timerLed);
                    HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
                    HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
                    HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin); /* LED_GREEN - on */
 
-                   //strcat(ProbeMsg, OwnID);
-                   ProbeMsg[1] = OwnID[0];
              	   APP_LOG(TS_OFF, VLEVEL_M, "-----------------------\n\r");
              	   APP_LOG(TS_ON, VLEVEL_L, "PROBE %s packet sent \n\r",ProbeMsg);
 
-                   memcpy(BufferTx, ProbeMsg, sizeof(ProbeMsg));
-                   Radio.Send(BufferTx, PAYLOAD_LEN);
                }
 
         	   /* DELAY: wake-up time + giving time to the remote node to be in Rx*/
